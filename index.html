@@ -104,21 +104,37 @@
         const playerMarker = L.circleMarker(playerLoc, { radius: 8, fillColor: "#007BFF", color: "#fff", weight: 2, fillOpacity: 1 }).addTo(map);
         const radiusCircle = L.circle(playerLoc, { radius: 150, color: 'green', fillOpacity: 0.1, weight: 1 }).addTo(map);
 
-        // --- 3. FETCH DATA ---
+// --- 3. FETCH DATA (DIAGNOSTIC VERSION) ---
         async function loadGameData() {
+            const loadText = document.getElementById('load-text');
+            
             try {
-                // Fetch Stops
+                // Step 1: Fetch Stops
+                loadText.innerHTML = "Step 1/2: Downloading Bus Stops...<br><span style='font-size:14px; font-weight:normal;'>Connecting to data.etabus.gov.hk</span>";
+                
                 let stopRes = await fetch('https://data.etabus.gov.hk/v1/transport/kmb/stop');
+                if (!stopRes.ok) throw new Error(`Server rejected Stop API with status: ${stopRes.status}`);
                 allStops = (await stopRes.json()).data;
                 
-                // Fetch Route Sequences (Huge file)
+                // Step 2: Fetch Routes
+                loadText.innerHTML = "Step 2/2: Downloading Routes...<br><span style='font-size:14px; font-weight:normal;'>This is a huge file, please wait...</span>";
+                
                 let routeRes = await fetch('https://data.etabus.gov.hk/v1/transport/kmb/route-stop');
+                if (!routeRes.ok) throw new Error(`Server rejected Route API with status: ${routeRes.status}`);
                 allRouteStops = (await routeRes.json()).data;
 
+                // Success! Hide loading screen.
                 document.getElementById('loading-screen').style.display = 'none';
                 renderNearbyStops();
+
             } catch (e) {
-                document.getElementById('load-text').innerText = "Failed to load data. Check internet.";
+                // Print the EXACT error so we can fix it
+                console.error(e);
+                loadText.innerHTML = `
+                    <span style="color:#DC3545; font-size:24px;">Crash Report:</span><br>
+                    <span style="font-size:16px; font-weight:normal;">${e.name}: ${e.message}</span><br><br>
+                    <button onclick="loadGameData()" style="padding:10px 20px; font-size:16px; border-radius:5px; cursor:pointer;">TRY AGAIN</button>
+                `;
             }
         }
 
