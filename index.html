@@ -104,23 +104,30 @@
         const playerMarker = L.circleMarker(playerLoc, { radius: 8, fillColor: "#007BFF", color: "#fff", weight: 2, fillOpacity: 1 }).addTo(map);
         const radiusCircle = L.circle(playerLoc, { radius: 150, color: 'green', fillOpacity: 0.1, weight: 1 }).addTo(map);
 
-// --- 3. FETCH DATA (DIAGNOSTIC VERSION) ---
+
+
+     // --- 3. FETCH DATA (CORS PROXY FIX) ---
         async function loadGameData() {
             const loadText = document.getElementById('load-text');
             
+            // The free proxy that acts as our middleman
+            const proxy = "https://api.allorigins.win/raw?url=";
+            
             try {
-                // Step 1: Fetch Stops
-                loadText.innerHTML = "Step 1/2: Downloading Bus Stops...<br><span style='font-size:14px; font-weight:normal;'>Connecting to data.etabus.gov.hk</span>";
+                // Step 1: Fetch Stops via Proxy
+                loadText.innerHTML = "Step 1/2: Bypassing Security & Downloading Bus Stops...<br><span style='font-size:14px; font-weight:normal;'>Connecting via proxy...</span>";
                 
-                let stopRes = await fetch('https://data.etabus.gov.hk/v1/transport/kmb/stop');
-                if (!stopRes.ok) throw new Error(`Server rejected Stop API with status: ${stopRes.status}`);
+                let stopUrl = encodeURIComponent('https://data.etabus.gov.hk/v1/transport/kmb/stop');
+                let stopRes = await fetch(proxy + stopUrl);
+                if (!stopRes.ok) throw new Error("Proxy failed to connect to HK Gov Stops API");
                 allStops = (await stopRes.json()).data;
                 
-                // Step 2: Fetch Routes
+                // Step 2: Fetch Routes via Proxy
                 loadText.innerHTML = "Step 2/2: Downloading Routes...<br><span style='font-size:14px; font-weight:normal;'>This is a huge file, please wait...</span>";
                 
-                let routeRes = await fetch('https://data.etabus.gov.hk/v1/transport/kmb/route-stop');
-                if (!routeRes.ok) throw new Error(`Server rejected Route API with status: ${routeRes.status}`);
+                let routeUrl = encodeURIComponent('https://data.etabus.gov.hk/v1/transport/kmb/route-stop');
+                let routeRes = await fetch(proxy + routeUrl);
+                if (!routeRes.ok) throw new Error("Proxy failed to connect to HK Gov Routes API");
                 allRouteStops = (await routeRes.json()).data;
 
                 // Success! Hide loading screen.
@@ -128,7 +135,7 @@
                 renderNearbyStops();
 
             } catch (e) {
-                // Print the EXACT error so we can fix it
+                // Print the exact error if the proxy or internet fails
                 console.error(e);
                 loadText.innerHTML = `
                     <span style="color:#DC3545; font-size:24px;">Crash Report:</span><br>
@@ -137,7 +144,6 @@
                 `;
             }
         }
-
         // --- 4. RENDER MAP & STOPS ---
         function getStopById(id) { return allStops.find(s => s.stop === id); }
 
