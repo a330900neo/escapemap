@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>HK Escape Simulator - Real Routes</title>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <style>
+        body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; font-family: sans-serif; background: #222; }
+        #map { width: 100%; height: 100%; z-index: 1; }
+        
+        /* UI Overlays */
+        #ui-top {
+            position: absolute; top: 10px; left: 10px; right: 10px;
+            background: rgba(0, 0, 0, 0.8); color: white;
+            padding: 15px; border-radius: 10px; z-index: 1000;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        
+        #ui-bottom {
+            position: absolute; bottom: 20px; left: 10px; right: 10px;
+            background: rgba(255, 255, 255, 0.95); color: black;
+            padding: 15px; border-radius: 10px; z-index: 1000;
+            display: flex; flex-direction: column; gap: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+        }
+
+        #loading-screen {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: #222; color: white; z-index: 9999;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            font-size: 20px; font-weight: bold; text-align: center; padding: 20px;
+        }
+
+        .btn {
+            background: #007BFF; color: white; border: none; padding: 10px;
+            border-radius: 5px; font-weight: bold; font-size: 16px; width: 100%; cursor: pointer;
+        }
+        .btn-red { background: #DC3545; }
+        .route-btn { background: #FF9800; margin-top: 5px; }
+        
+        #route-menu { display: none; max-height: 150px; overflow-y: auto; border-top: 1px solid #ccc; padding-top: 10px; }
+    </style>
+</head>
+<body>
+
+    <div id="loading-screen">
+        <div id="load-text">Connecting to HK Gov API...<br><span style="font-size:14px; font-weight:normal;">Downloading 70,000+ KMB Routes</span></div>
+    </div>
+
+    <div id="ui-top">
+        <div id="clock">Day 1 - 08:00:00</div>
+        <div>
+            <span id="speed-display">1x</span>
+            <input type="range" id="time-speed" min="1" max="60" value="1" style="width: 80px;">
+        </div>
+    </div>
+    
+    <div id="ui-bottom">
+        <div>Status: <span id="status" style="font-weight:bold;">WAITING</span> at <span id="location-name">Mong Kok Station</span></div>
+        
+        <div id="route-menu"></div>
+        
+        <button id="btn-alight" class="btn btn-red" style="display: none;" onclick="alightBus()">ALIGHT AT NEXT STOP</button>
+    </div>
+
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/turf@3.0.14/turf.min.js"></script>
+
+    <script>
+        // --- 1. GAME VARIABLES ---
+        let gameTime = new Date(); gameTime.setHours(8, 0, 0, 0); 
+        let timeMultiplier = 1;
+        
+        let playerState = "WAITING"; // WAITING, WALKING, RIDING
+        let playerLoc = [22.3193, 114.1694]; 
+        let currentStopId = null;
+        let targetLocation = null;
+        
+        const walkingSpeed = 1.4; // m/s
+        const busSpeed = 8.33; // ~30 km/h in m/s
+
+        // API Data Storage
+        let allStops = [];
+        let allRouteStops = [];
+        let activeMarkers = L.layerGroup();
+        let busRouteLine = null; // Draws the road path on map
+
+        // Riding Variables
+        let currentRide = null; 
+        let ridePathGeoJSON = null;
+        let rideDistanceTravelled = 0;
+        let rideTotalDistance = 0;
+        let wantToAlight = false;
+
+        // --- 2. INIT MAP ---
+        const map = L.map('map', { zoomControl: false }).setView(playerLoc, 17);
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(map);
+        activeMarkers.addTo(map);
+
+        const playerMarker = L.circleMarker(playerLoc, { radius: 8, fillColor: "#007BFF", color: "#fff", weight: 2, fillOpacity: 1 }).addTo(map);
+        const radiusCircle = L.circle(playerLoc, { radius: 150, color: 'green', fillOpacity: 0.1, weight: 1 }).addTo(map);
+
+        // --- 3. FETCH DATA ---
+        async function loadGameData() {
+            try {
+                // Fetch Stops
+                let stopRes = await fetch('https://data.etabus.gov.hk/v1/transport/kmb/stop');
+                allStops = (await stopRes.json()).data;
+                
+                // Fetch Route Sequences (Huge file)
+                let routeRes = await fetch('https://data.etabus.gov.hk/v1/transport/kmb/route-stop');
+                allRouteStops = (await routeRes.json()).data;
+
+                document.getElementById('loading-screen').style.display = 'none';
+                renderNearbyStops();
+            } catch (e) {
+                document.getElementById('load-text').innerText = "Failed to load data. Check internet.";
+            }
+        }
+
+        // --- 4. RENDER MAP & STOPS ---
+        function getStopById(id) { return allStops.find(s => s.stop === id); }
+
+        function renderNearbyStops() {
+            activeMarkers.clearLayers();
+            const pPoint = turf.point([playerLoc[1], playerLoc[0]]);
+
+            allStops.forEach(stop => {
+                const sPoint = turf.point([parseFloat(stop.long), parseFloat(stop.lat)]);
+                const dist = turf.distance(pPoint, sPoint, "kilometers") * 1000;
+
+                if (dist <= 800) {
+                    const marker = L.circleMarker([stop.lat, stop.long], { radius: 5, fillColor: "#DC3545", color: "#fff", weight: 1, fillOpacity: 1 });
+                    
+                    marker.on('click', () => {
+                        if (playerState !== "WAITING") return;
+                        if (dist > 150 && dist > 5) {
+                            alert(`Too far! You can only walk to stops within 150m.`);
+                        } else if (dist > 5) {
+                            startWalking(stop);
+                        }
+                    });
+                    activeMarkers.addLayer(marker);
+                }
+            });
+        }
+
+        // --- 5. PLAYER ACTIONS ---
+        function startWalking(stop) {
+            playerState = "WALKING";
+            targetLocation = { lat: parseFloat(stop.lat), lng: parseFloat(stop.long), name: stop.name_en, id: stop.stop };
+            document.getElementById('status').innerText = "WALKING";
+            document.getElementById('status').style.color = "red";
+            document.getElementById('location-name').innerText = `towards ${stop.name_en}`;
+            document.getElementById('route-menu').style.display = "none";
+        }
+
+        function arriveAtStop() {
+            playerLoc = [targetLocation.lat, targetLocation.lng];
+            playerState = "WAITING";
+            currentStopId = targetLocation.id;
+            
+            document.getElementById('status').innerText = "WAITING";
+            document.getElementById('status').style.color = "black";
+            document.getElementById('location-name').innerText = targetLocation.name;
+            targetLocation = null;
+            renderNearbyStops();
+            showRoutesForCurrentStop();
+        }
+
+        function showRoutesForCurrentStop() {
+            if (!currentStopId) return;
+            const menu = document.getElementById('route-menu');
+            menu.innerHTML = "";
+            menu.style.display = "block";
+
+            // Find all routes that stop here
+            let passingRoutes = allRouteStops.filter(rs => rs.stop === currentStopId);
+            
+            if(passingRoutes.length === 0) {
+                menu.innerHTML = "<div>No KMB routes found here.</div>"; return;
+            }
+
+            passingRoutes.forEach(route => {
+                let btn = document.createElement('button');
+                btn.className = "btn route-btn";
+                btn.innerText = `Board Bus ${route.route} (Dir: ${route.bound})`;
+                btn.onclick = () => boardBus(route);
+                menu.appendChild(btn);
+            });
+        }
+
+        // --- 6. RIDING & ROAD ROUTING (OSRM) ---
+        async function boardBus(routeData) {
+            playerState = "RIDING";
+            wantToAlight = false;
+            document.getElementById('route-menu').style.display = "none";
+            document.getElementById('btn-alight').style.display = "block";
+            document.getElementById('status').innerText = `RIDING BUS ${routeData.route}`;
+            document.getElementById('status').style.color = "blue";
+
+            currentRide = {
+                route: routeData.route, bound: routeData.bound,
+                service_type: routeData.service_type, seq: parseInt(routeData.seq)
+            };
+            
+            await calculateNextStopPath();
+        }
+
+        async function calculateNextStopPath() {
+            // Find the next stop in the sequence for this exact route
+            currentRide.seq += 1;
+            const nextStopData = allRouteStops.find(rs => 
+                rs.route === currentRide.route && rs.bound === currentRide.bound && 
+                rs.service_type === currentRide.service_type && parseInt(rs.seq) === currentRide.seq
+            );
+
+            if (!nextStopData) {
+                // Route ended! Force alight.
+                forceAlight();
+                return;
+            }
+
+            const nextStop = getStopById(nextStopData.stop);
+            document.getElementById('location-name').innerText = `Next: ${nextStop.name_en}`;
+            targetLocation = { lat: parseFloat(nextStop.lat), lng: parseFloat(nextStop.long), name: nextStop.name_en, id: nextStop.stop };
+
+            // MAGIC: Fetch exact road path from OSRM
+            const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${playerLoc[1]},${playerLoc[0]};${targetLocation.lng},${targetLocation.lat}?geometries=geojson`;
+            
+            try {
+                const res = await fetch(osrmUrl);
+                const json = await res.json();
+                
+                if (json.routes && json.routes.length > 0) {
+                    ridePathGeoJSON = json.routes[0].geometry; // The exact road polyline
+                    rideDistanceTravelled = 0;
+                    rideTotalDistance = turf.length(ridePathGeoJSON, {units: 'meters'});
+                    
+                    // Draw the red path on the map
+                    if (busRouteLine) map.removeLayer(busRouteLine);
+                    busRouteLine = L.geoJSON(ridePathGeoJSON, { style: { color: 'red', weight: 4 } }).addTo(map);
+                } else {
+                    // Fallback to straight line if OSRM fails
+                    ridePathGeoJSON = turf.lineString([[playerLoc[1], playerLoc[0]], [targetLocation.lng, targetLocation.lat]]);
+                    rideDistanceTravelled = 0;
+                    rideTotalDistance = turf.length(ridePathGeoJSON, {units: 'meters'});
+                }
+            } catch (e) {
+                console.log("OSRM Error, falling back to straight line.");
+            }
+        }
+
+        function alightBus() {
+            wantToAlight = true;
+            document.getElementById('btn-alight').innerText = "Alighting at next stop...";
+            document.getElementById('btn-alight').style.background = "grey";
+        }
+
+        function forceAlight() {
+            playerState = "WAITING";
+            currentRide = null;
+            ridePathGeoJSON = null;
+            if (busRouteLine) map.removeLayer(busRouteLine);
+            
+            document.getElementById('btn-alight').style.display = "none";
+            document.getElementById('btn-alight').innerText = "ALIGHT AT NEXT STOP";
+            document.getElementById('btn-alight').style.background = "#DC3545";
+            
+            arriveAtStop(); // Arrive at whatever the target location was
+        }
+
+        // --- 7. GAME ENGINE LOOP ---
+        document.getElementById('time-speed').addEventListener('input', (e) => {
+            timeMultiplier = parseInt(e.target.value);
+            document.getElementById('speed-display').innerText = timeMultiplier + "x";
+        });
+
+        setInterval(() => {
+            const tickRate = 100;
+            const timeToAdd = tickRate * timeMultiplier;
+            gameTime = new Date(gameTime.getTime() + timeToAdd);
+            document.getElementById('clock').innerText = gameTime.toLocaleTimeString('en-GB');
+
+            const secondsPassed = timeToAdd / 1000;
+
+            // HANDLE WALKING
+            if (playerState === "WALKING" && targetLocation) {
+                const from = turf.point([playerLoc[1], playerLoc[0]]);
+                const to = turf.point([targetLocation.lng, targetLocation.lat]);
+                let distToTarget = turf.distance(from, to, "kilometers") * 1000;
+                let stepDist = walkingSpeed * secondsPassed;
+
+                if (stepDist >= distToTarget) arriveAtStop();
+                else {
+                    const bearing = turf.bearing(from, to);
+                    const newPos = turf.destination(from, stepDist / 1000, bearing, "kilometers");
+                    playerLoc = [newPos.geometry.coordinates[1], newPos.geometry.coordinates[0]];
+                }
+                updateGraphics();
+            }
+
+            // HANDLE RIDING ON ROAD
+            if (playerState === "RIDING" && ridePathGeoJSON && targetLocation) {
+                let stepDist = busSpeed * secondsPassed;
+                rideDistanceTravelled += stepDist;
+
+                if (rideDistanceTravelled >= rideTotalDistance) {
+                    // Arrived at the next stop
+                    playerLoc = [targetLocation.lat, targetLocation.lng];
+                    
+                    if (wantToAlight) {
+                        forceAlight();
+                    } else {
+                        // Stay on bus, calculate path to the NEXT stop
+                        calculateNextStopPath();
+                    }
+                } else {
+                    // Drive along the road geometry
+                    let currentPoint = turf.along(ridePathGeoJSON, rideDistanceTravelled / 1000, {units: 'kilometers'});
+                    playerLoc = [currentPoint.geometry.coordinates[1], currentPoint.geometry.coordinates[0]];
+                }
+                updateGraphics();
+            }
+
+        }, 100);
+
+        function updateGraphics() {
+            playerMarker.setLatLng(playerLoc);
+            radiusCircle.setLatLng(playerLoc);
+            map.panTo(playerLoc);
+        }
+
+        // BOOT GAME
+        loadGameData();
+
+    </script>
+</body>
+</html>
