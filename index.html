@@ -2,364 +2,414 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>HK Escape Simulator - Real Routes</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>HK Bus Route Planner</title>
     
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     
     <style>
-        body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; font-family: sans-serif; background: #222; }
-        #map { width: 100%; height: 100%; z-index: 1; }
-        
-        /* UI Overlays */
-        #ui-top {
-            position: absolute; top: 10px; left: 10px; right: 10px;
-            background: rgba(0, 0, 0, 0.8); color: white;
-            padding: 15px; border-radius: 10px; z-index: 1000;
-            display: flex; justify-content: space-between; align-items: center;
-        }
-        
-        #ui-bottom {
-            position: absolute; bottom: 20px; left: 10px; right: 10px;
-            background: rgba(255, 255, 255, 0.95); color: black;
-            padding: 15px; border-radius: 10px; z-index: 1000;
-            display: flex; flex-direction: column; gap: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+        body { margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; overflow: hidden; }
+        #map { height: 100vh; width: 100vw; z-index: 1; }
+
+        #ui-panel {
+            position: absolute; bottom: 0; left: 0; width: 100%;
+            background: white; z-index: 1000;
+            border-radius: 15px 15px 0 0;
+            box-shadow: 0 -2px 10px rgba(0,0,0,0.2);
+            display: flex; flex-direction: column; max-height: 55vh;
         }
 
-        #loading-screen {
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: #222; color: white; z-index: 9999;
-            display: flex; flex-direction: column; justify-content: center; align-items: center;
-            font-size: 20px; font-weight: bold; text-align: center; padding: 20px;
-        }
-
-        .btn {
-            background: #007BFF; color: white; border: none; padding: 10px;
-            border-radius: 5px; font-weight: bold; font-size: 16px; width: 100%; cursor: pointer;
-        }
-        .btn-red { background: #DC3545; }
-        .route-btn { background: #FF9800; margin-top: 5px; }
+        .panel-header { padding: 15px; background: #343a40; color: white; border-radius: 15px 15px 0 0; font-weight: bold; text-align: center; }
+        .panel-content { padding: 15px; overflow-y: auto; }
         
-        #route-menu { display: none; max-height: 150px; overflow-y: auto; border-top: 1px solid #ccc; padding-top: 10px; }
+        .section { background: #f8f9fa; padding: 10px; border-radius: 8px; margin-bottom: 10px; border: 1px solid #dee2e6; }
+        .section-title { font-weight: bold; margin-bottom: 10px; font-size: 0.9em; color: #495057; text-transform: uppercase; }
+
+        .form-group { display: flex; gap: 10px; margin-bottom: 10px; align-items: center; }
+        input[type="text"] { flex: 1; padding: 8px; border: 1px solid #ccc; border-radius: 4px; }
+        
+        button { padding: 8px 12px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 0.9em; }
+        button:hover { background: #0056b3; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        
+        .active-mode { background: #28a745 !important; border: 2px solid #1e7e34; } 
+        .danger-btn { background: #dc3545 !important; }
+        .tab-btn { flex: 1; background: #6c757d; }
+        .active-tab { background: #17a2b8 !important; }
+
+        /* Group & Route List Styles */
+        .route-group { margin-bottom: 10px; }
+        .group-title { font-weight: bold; background: #e9ecef; padding: 5px 10px; border-radius: 4px; margin-bottom: 5px; font-size: 0.9em; }
+        .route-item { display: flex; justify-content: space-between; align-items: center; padding: 8px; border: 1px solid #ddd; margin-bottom: 5px; border-radius: 4px; background: white;}
+        .stop-list-item { display: flex; justify-content: space-between; font-size: 0.85em; padding: 5px; border-bottom: 1px solid #eee; }
+        
+        .stop-popup { text-align: center; }
+        .stop-popup input { width: 120px; margin-bottom: 5px; }
+
+        /* Edit Settings Modal overlay */
+        #edit-settings-modal { display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 2000; justify-content: center; align-items: center; }
+        .modal-content { background: white; padding: 20px; border-radius: 8px; width: 80%; max-width: 300px; }
     </style>
 </head>
 <body>
 
-    <div id="loading-screen">
-        <div id="load-text">Connecting to HK Gov API...<br><span style="font-size:14px; font-weight:normal;">Downloading 70,000+ KMB Routes</span></div>
-    </div>
-
-    <div id="ui-top">
-        <div id="clock">Day 1 - 08:00:00</div>
-        <div>
-            <span id="speed-display">1x</span>
-            <input type="range" id="time-speed" min="1" max="60" value="1" style="width: 80px;">
-        </div>
-    </div>
-    
-    <div id="ui-bottom">
-        <div>Status: <span id="status" style="font-weight:bold;">WAITING</span> at <span id="location-name">Mong Kok Station</span></div>
-        
-        <div id="route-menu"></div>
-        
-        <button id="btn-alight" class="btn btn-red" style="display: none;" onclick="alightBus()">ALIGHT AT NEXT STOP</button>
-    </div>
-
     <div id="map"></div>
 
+    <div id="edit-settings-modal">
+        <div class="modal-content">
+            <h3 style="margin-top:0;">Edit Route Settings</h3>
+            <div class="form-group"><input type="text" id="edit-route-group" placeholder="Group (e.g. KMB)"></div>
+            <div class="form-group">
+                <label>Color: </label>
+                <input type="color" id="edit-route-color">
+            </div>
+            <div style="display:flex; gap:10px; margin-top:15px;">
+                <button onclick="saveRouteSettings()" style="flex:1; background:#28a745;">Save</button>
+                <button onclick="closeEditSettings()" style="flex:1; background:#6c757d;">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="ui-panel">
+        <div class="panel-header" id="header-text">City Planner: Idle Mode</div>
+        <div class="panel-content">
+            
+            <div class="section">
+                <div class="section-title">1. Infrastructure</div>
+                <button id="btn-build-stops" style="width: 100%;">🏗️ Build Mode: Drop Stops on Map</button>
+            </div>
+
+            <div class="section" id="route-creation-section">
+                <div class="section-title">2. Route Management</div>
+                <div class="form-group">
+                    <input type="text" id="route-number" placeholder="Route No." style="width: 60px; flex:none;">
+                    <input type="text" id="route-group" placeholder="Group (e.g. KMB)">
+                    <input type="color" id="route-color" value="#ff0000">
+                    <button id="btn-create-route">Add</button>
+                </div>
+                <div id="route-list"></div>
+            </div>
+
+            <div class="section" id="route-editor-section" style="display: none; border-color: #17a2b8;">
+                <div class="section-title" id="editor-title">Editing Route</div>
+                
+                <div class="form-group">
+                    <button class="tab-btn active-tab" id="btn-outbound">Outbound</button>
+                    <button class="tab-btn" id="btn-inbound">Inbound</button>
+                </div>
+                
+                <p style="font-size: 0.85em; color: #666; margin: 5px 0;">Tap existing stops on the map to add them to this direction.</p>
+                
+                <div id="current-route-stops" style="max-height: 100px; overflow-y: auto; background: white; border: 1px solid #ccc; border-radius: 4px;"></div>
+                
+                <div class="form-group" style="margin-top: 10px;">
+                    <button class="danger-btn" id="btn-clear-direction">Clear Line</button>
+                    <button id="btn-done-editing" style="flex:1;">Done Editing</button>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="https://unpkg.com/turf@3.0.14/turf.min.js"></script>
 
     <script>
-        // --- 1. GAME VARIABLES ---
-        let gameTime = new Date(); gameTime.setHours(8, 0, 0, 0); 
-        let timeMultiplier = 1;
-        
-        let playerState = "WAITING"; // WAITING, WALKING, RIDING
-        let playerLoc = [22.3193, 114.1694]; 
-        let currentStopId = null;
-        let targetLocation = null;
-        
-        const walkingSpeed = 1.4; // m/s
-        const busSpeed = 8.33; // ~30 km/h in m/s
+        // --- 1. Map Initialization & Stop Hiding Logic ---
+        const map = L.map('map', { zoomControl: false }).setView([22.3193, 114.1694], 14); 
+        L.control.zoom({ position: 'topright' }).addTo(map);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
 
-        // API Data Storage
-        let allStops = [];
-        let allRouteStops = [];
-        let activeMarkers = L.layerGroup();
-        let busRouteLine = null; // Draws the road path on map
+        // Layer group to hold all stops, allows mass hide/show based on zoom
+        const stopLayerGroup = L.layerGroup().addTo(map);
 
-        // Riding Variables
-        let currentRide = null; 
-        let ridePathGeoJSON = null;
-        let rideDistanceTravelled = 0;
-        let rideTotalDistance = 0;
-        let wantToAlight = false;
+        map.on('zoomend', () => {
+            if (map.getZoom() < 14) {
+                if (map.hasLayer(stopLayerGroup)) map.removeLayer(stopLayerGroup);
+            } else {
+                if (!map.hasLayer(stopLayerGroup)) map.addLayer(stopLayerGroup);
+            }
+        });
 
-        // --- 2. INIT MAP ---
-        const map = L.map('map', { zoomControl: false }).setView(playerLoc, 17);
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(map);
-        activeMarkers.addTo(map);
+        // --- 2. Game State ---
+        let globalStops = {}; 
+        let routes = {};      
+        let appMode = 'IDLE'; 
+        let editingRouteId = null;
+        let editingDirection = 'outbound';
+        let stopCounter = 1;
+        let settingsTargetRoute = null;
 
-        const playerMarker = L.circleMarker(playerLoc, { radius: 8, fillColor: "#007BFF", color: "#fff", weight: 2, fillOpacity: 1 }).addTo(map);
-        const radiusCircle = L.circle(playerLoc, { radius: 150, color: 'green', fillOpacity: 0.1, weight: 1 }).addTo(map);
+        const btnBuildStops = document.getElementById('btn-build-stops');
+        const headerText = document.getElementById('header-text');
+        const routeCreationSection = document.getElementById('route-creation-section');
+        const routeEditorSection = document.getElementById('route-editor-section');
+        const currentRouteStopsDiv = document.getElementById('current-route-stops');
 
+        function setMode(mode) {
+            appMode = mode;
+            map.getContainer().style.cursor = '';
+            btnBuildStops.classList.remove('active-mode');
+            btnBuildStops.innerText = "🏗️ Build Mode: Drop Stops on Map";
 
+            if (mode === 'IDLE') {
+                headerText.innerText = "City Planner: Idle";
+                routeCreationSection.style.display = 'block';
+                routeEditorSection.style.display = 'none';
+            } else if (mode === 'BUILD_STOPS') {
+                headerText.innerText = "City Planner: Building Stops";
+                btnBuildStops.classList.add('active-mode');
+                btnBuildStops.innerText = "🛑 Stop Building (Tap Map to place)";
+                map.getContainer().style.cursor = 'crosshair';
+                // Force show stops if they entered build mode while zoomed out
+                if (!map.hasLayer(stopLayerGroup)) map.addLayer(stopLayerGroup);
+            } else if (mode === 'EDIT_ROUTE') {
+                headerText.innerText = `City Planner: Editing Route ${editingRouteId}`;
+                routeCreationSection.style.display = 'none';
+                routeEditorSection.style.display = 'block';
+                document.getElementById('editor-title').innerHTML = `Editing Route: <strong style="color:${routes[editingRouteId].color}">${editingRouteId}</strong>`;
+                updateRouteEditorUI();
+            }
+        }
 
-     // --- 3. FETCH DATA (CORS PROXY FIX) ---
-        async function loadGameData() {
-            const loadText = document.getElementById('load-text');
-            
-            // The free proxy that acts as our middleman
-            const proxy = "https://api.allorigins.win/raw?url=";
+        btnBuildStops.addEventListener('click', () => setMode(appMode === 'BUILD_STOPS' ? 'IDLE' : 'BUILD_STOPS'));
+        document.getElementById('btn-done-editing').addEventListener('click', () => setMode('IDLE'));
+
+        // --- 3. Global Stop Placement ---
+        map.on('click', async (e) => {
+            if (appMode !== 'BUILD_STOPS') return;
+
+            // Using official OSRM server. 
+            const osrmNearestUrl = `https://router.project-osrm.org/nearest/v1/driving/${e.latlng.lng},${e.latlng.lat}`;
             
             try {
-                // Step 1: Fetch Stops via Proxy
-                loadText.innerHTML = "Step 1/2: Bypassing Security & Downloading Bus Stops...<br><span style='font-size:14px; font-weight:normal;'>Connecting via proxy...</span>";
+                const response = await fetch(osrmNearestUrl);
+                if(response.status === 403) throw new Error("403 Forbidden. Run this file on a local web server (like VS Code Live Server) to bypass CORS issues.");
                 
-                let stopUrl = encodeURIComponent('https://data.etabus.gov.hk/v1/transport/kmb/stop');
-                let stopRes = await fetch(proxy + stopUrl);
-                if (!stopRes.ok) throw new Error("Proxy failed to connect to HK Gov Stops API");
-                allStops = (await stopRes.json()).data;
-                
-                // Step 2: Fetch Routes via Proxy
-                loadText.innerHTML = "Step 2/2: Downloading Routes...<br><span style='font-size:14px; font-weight:normal;'>This is a huge file, please wait...</span>";
-                
-                let routeUrl = encodeURIComponent('https://data.etabus.gov.hk/v1/transport/kmb/route-stop');
-                let routeRes = await fetch(proxy + routeUrl);
-                if (!routeRes.ok) throw new Error("Proxy failed to connect to HK Gov Routes API");
-                allRouteStops = (await routeRes.json()).data;
+                const data = await response.json();
 
-                // Success! Hide loading screen.
-                document.getElementById('loading-screen').style.display = 'none';
-                renderNearbyStops();
+                if (data.code === 'Ok') {
+                    const snappedLng = data.waypoints[0].location[0];
+                    const snappedLat = data.waypoints[0].location[1];
+                    const stopId = 'stop_' + Date.now();
+                    const stopName = `Stop ${stopCounter++}`;
 
-            } catch (e) {
-                // Print the exact error if the proxy or internet fails
-                console.error(e);
-                loadText.innerHTML = `
-                    <span style="color:#DC3545; font-size:24px;">Crash Report:</span><br>
-                    <span style="font-size:16px; font-weight:normal;">${e.name}: ${e.message}</span><br><br>
-                    <button onclick="loadGameData()" style="padding:10px 20px; font-size:16px; border-radius:5px; cursor:pointer;">TRY AGAIN</button>
-                `;
-            }
-        }
-        // --- 4. RENDER MAP & STOPS ---
-        function getStopById(id) { return allStops.find(s => s.stop === id); }
+                    const marker = L.circleMarker([snappedLat, snappedLng], {
+                        radius: 7, fillColor: "#333", color: "#fff", weight: 2, fillOpacity: 1
+                    }).addTo(stopLayerGroup); // Added to layer group instead of map directly
 
-        function renderNearbyStops() {
-            activeMarkers.clearLayers();
-            const pPoint = turf.point([playerLoc[1], playerLoc[0]]);
-
-            allStops.forEach(stop => {
-                const sPoint = turf.point([parseFloat(stop.long), parseFloat(stop.lat)]);
-                const dist = turf.distance(pPoint, sPoint, "kilometers") * 1000;
-
-                if (dist <= 800) {
-                    const marker = L.circleMarker([stop.lat, stop.long], { radius: 5, fillColor: "#DC3545", color: "#fff", weight: 1, fillOpacity: 1 });
-                    
-                    marker.on('click', () => {
-                        if (playerState !== "WAITING") return;
-                        if (dist > 150 && dist > 5) {
-                            alert(`Too far! You can only walk to stops within 150m.`);
-                        } else if (dist > 5) {
-                            startWalking(stop);
-                        }
-                    });
-                    activeMarkers.addLayer(marker);
+                    globalStops[stopId] = { id: stopId, name: stopName, lat: snappedLat, lng: snappedLng, marker: marker };
+                    marker.on('click', () => handleStopClick(stopId));
+                    bindStopPopup(marker, stopId, stopName);
                 }
-            });
-        }
-
-        // --- 5. PLAYER ACTIONS ---
-        function startWalking(stop) {
-            playerState = "WALKING";
-            targetLocation = { lat: parseFloat(stop.lat), lng: parseFloat(stop.long), name: stop.name_en, id: stop.stop };
-            document.getElementById('status').innerText = "WALKING";
-            document.getElementById('status').style.color = "red";
-            document.getElementById('location-name').innerText = `towards ${stop.name_en}`;
-            document.getElementById('route-menu').style.display = "none";
-        }
-
-        function arriveAtStop() {
-            playerLoc = [targetLocation.lat, targetLocation.lng];
-            playerState = "WAITING";
-            currentStopId = targetLocation.id;
-            
-            document.getElementById('status').innerText = "WAITING";
-            document.getElementById('status').style.color = "black";
-            document.getElementById('location-name').innerText = targetLocation.name;
-            targetLocation = null;
-            renderNearbyStops();
-            showRoutesForCurrentStop();
-        }
-
-        function showRoutesForCurrentStop() {
-            if (!currentStopId) return;
-            const menu = document.getElementById('route-menu');
-            menu.innerHTML = "";
-            menu.style.display = "block";
-
-            // Find all routes that stop here
-            let passingRoutes = allRouteStops.filter(rs => rs.stop === currentStopId);
-            
-            if(passingRoutes.length === 0) {
-                menu.innerHTML = "<div>No KMB routes found here.</div>"; return;
+            } catch (error) { 
+                console.error(error); 
+                alert("Routing Server Error: " + error.message);
             }
+        });
 
-            passingRoutes.forEach(route => {
-                let btn = document.createElement('button');
-                btn.className = "btn route-btn";
-                btn.innerText = `Board Bus ${route.route} (Dir: ${route.bound})`;
-                btn.onclick = () => boardBus(route);
-                menu.appendChild(btn);
-            });
+        function handleStopClick(stopId) {
+            if (appMode === 'EDIT_ROUTE') {
+                const directionData = routes[editingRouteId][editingDirection];
+                if (directionData.stopIds[directionData.stopIds.length - 1] === stopId) return;
+
+                directionData.stopIds.push(stopId);
+                updateRouteEditorUI();
+                drawRouteLine(editingRouteId, editingDirection);
+            } else {
+                globalStops[stopId].marker.openPopup();
+            }
         }
 
-        // --- 6. RIDING & ROAD ROUTING (OSRM) ---
-        async function boardBus(routeData) {
-            playerState = "RIDING";
-            wantToAlight = false;
-            document.getElementById('route-menu').style.display = "none";
-            document.getElementById('btn-alight').style.display = "block";
-            document.getElementById('status').innerText = `RIDING BUS ${routeData.route}`;
-            document.getElementById('status').style.color = "blue";
+        function bindStopPopup(marker, stopId, currentName) {
+            const popupContent = `
+                <div class="stop-popup">
+                    <strong>Manage Stop</strong><br>
+                    <input type="text" id="input-${stopId}" value="${currentName}"><br>
+                    <button onclick="renameGlobalStop('${stopId}')">Save</button>
+                    <button class="danger-btn" onclick="deleteGlobalStop('${stopId}')">Delete</button>
+                </div>
+            `;
+            marker.bindPopup(popupContent);
+        }
 
-            currentRide = {
-                route: routeData.route, bound: routeData.bound,
-                service_type: routeData.service_type, seq: parseInt(routeData.seq)
+        window.renameGlobalStop = function(stopId) {
+            const newName = document.getElementById(`input-${stopId}`).value;
+            globalStops[stopId].name = newName;
+            bindStopPopup(globalStops[stopId].marker, stopId, newName);
+            globalStops[stopId].marker.closePopup();
+            if (appMode === 'EDIT_ROUTE') updateRouteEditorUI();
+        };
+
+        window.deleteGlobalStop = function(stopId) {
+            stopLayerGroup.removeLayer(globalStops[stopId].marker);
+            delete globalStops[stopId];
+            
+            for (const routeId in routes) {
+                ['outbound', 'inbound'].forEach(dir => {
+                    routes[routeId][dir].stopIds = routes[routeId][dir].stopIds.filter(id => id !== stopId);
+                    drawRouteLine(routeId, dir); 
+                });
+            }
+            if (appMode === 'EDIT_ROUTE') updateRouteEditorUI();
+        };
+
+        // --- 4. Route Creation, Grouping & Settings Editing ---
+        document.getElementById('btn-create-route').addEventListener('click', () => {
+            const routeNum = document.getElementById('route-number').value.trim();
+            const groupName = document.getElementById('route-group').value.trim() || "Uncategorized";
+            const color = document.getElementById('route-color').value;
+
+            if (!routeNum) return alert("Enter a route number!");
+            if (routes[routeNum]) return alert("Route already exists!");
+
+            routes[routeNum] = {
+                group: groupName,
+                color: color,
+                outbound: { stopIds: [], polylineLayer: null },
+                inbound: { stopIds: [], polylineLayer: null }
             };
             
-            await calculateNextStopPath();
+            document.getElementById('route-number').value = ''; 
+            updateRouteListUI();
+        });
+
+        function updateRouteListUI() {
+            const list = document.getElementById('route-list');
+            list.innerHTML = '';
+            
+            // Organize routes into groups
+            const groupedRoutes = {};
+            for (const [id, data] of Object.entries(routes)) {
+                if (!groupedRoutes[data.group]) groupedRoutes[data.group] = [];
+                groupedRoutes[data.group].push({ id, ...data });
+            }
+
+            // Render groups
+            for (const groupName in groupedRoutes) {
+                const groupDiv = document.createElement('div');
+                groupDiv.className = 'route-group';
+                groupDiv.innerHTML = `<div class="group-title">${groupName}</div>`;
+                
+                groupedRoutes[groupName].forEach(route => {
+                    const routeItem = document.createElement('div');
+                    routeItem.className = 'route-item';
+                    routeItem.innerHTML = `
+                        <div style="flex:1;">
+                            <span style="color:${route.color}; font-size:1.2em;">⬤</span> <strong>${route.id}</strong>
+                        </div>
+                        <button onclick="openEditSettings('${route.id}')" style="background:#ffc107; color:black; margin-right:5px; padding:6px;">⚙️</button>
+                        <button onclick="startEditingRoute('${route.id}')">Edit Route</button>
+                    `;
+                    groupDiv.appendChild(routeItem);
+                });
+                list.appendChild(groupDiv);
+            }
         }
 
-        async function calculateNextStopPath() {
-            // Find the next stop in the sequence for this exact route
-            currentRide.seq += 1;
-            const nextStopData = allRouteStops.find(rs => 
-                rs.route === currentRide.route && rs.bound === currentRide.bound && 
-                rs.service_type === currentRide.service_type && parseInt(rs.seq) === currentRide.seq
-            );
+        // Edit Settings Logic
+        window.openEditSettings = function(id) {
+            settingsTargetRoute = id;
+            document.getElementById('edit-route-group').value = routes[id].group;
+            document.getElementById('edit-route-color').value = routes[id].color;
+            document.getElementById('edit-settings-modal').style.display = 'flex';
+        };
 
-            if (!nextStopData) {
-                // Route ended! Force alight.
-                forceAlight();
+        window.closeEditSettings = function() {
+            document.getElementById('edit-settings-modal').style.display = 'none';
+            settingsTargetRoute = null;
+        };
+
+        window.saveRouteSettings = function() {
+            if (!settingsTargetRoute) return;
+            const newGroup = document.getElementById('edit-route-group').value.trim() || "Uncategorized";
+            const newColor = document.getElementById('edit-route-color').value;
+
+            routes[settingsTargetRoute].group = newGroup;
+            routes[settingsTargetRoute].color = newColor;
+            
+            // Redraw lines to update colors
+            drawRouteLine(settingsTargetRoute, 'outbound');
+            drawRouteLine(settingsTargetRoute, 'inbound');
+
+            updateRouteListUI();
+            closeEditSettings();
+        };
+
+        window.startEditingRoute = function(id) {
+            editingRouteId = id;
+            setMode('EDIT_ROUTE');
+        };
+
+        // --- 5. Route Line Editing UI ---
+        const btnOutbound = document.getElementById('btn-outbound');
+        const btnInbound = document.getElementById('btn-inbound');
+
+        btnOutbound.addEventListener('click', () => { editingDirection = 'outbound'; btnOutbound.classList.add('active-tab'); btnInbound.classList.remove('active-tab'); updateRouteEditorUI(); });
+        btnInbound.addEventListener('click', () => { editingDirection = 'inbound'; btnInbound.classList.add('active-tab'); btnOutbound.classList.remove('active-tab'); updateRouteEditorUI(); });
+
+        function updateRouteEditorUI() {
+            if (!editingRouteId) return;
+            const stopIds = routes[editingRouteId][editingDirection].stopIds;
+            currentRouteStopsDiv.innerHTML = '';
+            
+            if (stopIds.length === 0) {
+                currentRouteStopsDiv.innerHTML = '<div style="padding:10px; text-align:center; color:#999;">No stops added yet.</div>';
                 return;
             }
 
-            const nextStop = getStopById(nextStopData.stop);
-            document.getElementById('location-name').innerText = `Next: ${nextStop.name_en}`;
-            targetLocation = { lat: parseFloat(nextStop.lat), lng: parseFloat(nextStop.long), name: nextStop.name_en, id: nextStop.stop };
-
-            // MAGIC: Fetch exact road path from OSRM
-            const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${playerLoc[1]},${playerLoc[0]};${targetLocation.lng},${targetLocation.lat}?geometries=geojson`;
-            
-            try {
-                const res = await fetch(osrmUrl);
-                const json = await res.json();
+            stopIds.forEach((stopId, index) => {
+                const stop = globalStops[stopId];
+                if (!stop) return; 
                 
-                if (json.routes && json.routes.length > 0) {
-                    ridePathGeoJSON = json.routes[0].geometry; // The exact road polyline
-                    rideDistanceTravelled = 0;
-                    rideTotalDistance = turf.length(ridePathGeoJSON, {units: 'meters'});
-                    
-                    // Draw the red path on the map
-                    if (busRouteLine) map.removeLayer(busRouteLine);
-                    busRouteLine = L.geoJSON(ridePathGeoJSON, { style: { color: 'red', weight: 4 } }).addTo(map);
-                } else {
-                    // Fallback to straight line if OSRM fails
-                    ridePathGeoJSON = turf.lineString([[playerLoc[1], playerLoc[0]], [targetLocation.lng, targetLocation.lat]]);
-                    rideDistanceTravelled = 0;
-                    rideTotalDistance = turf.length(ridePathGeoJSON, {units: 'meters'});
-                }
-            } catch (e) {
-                console.log("OSRM Error, falling back to straight line.");
-            }
+                const div = document.createElement('div');
+                div.className = 'stop-list-item';
+                div.innerHTML = `
+                    <span>${index + 1}. ${stop.name}</span>
+                    <button style="padding: 2px 5px; background: #dc3545;" onclick="removeStopFromRoute(${index})">X</button>
+                `;
+                currentRouteStopsDiv.appendChild(div);
+            });
         }
 
-        function alightBus() {
-            wantToAlight = true;
-            document.getElementById('btn-alight').innerText = "Alighting at next stop...";
-            document.getElementById('btn-alight').style.background = "grey";
-        }
+        window.removeStopFromRoute = function(index) {
+            routes[editingRouteId][editingDirection].stopIds.splice(index, 1);
+            updateRouteEditorUI();
+            drawRouteLine(editingRouteId, editingDirection);
+        };
 
-        function forceAlight() {
-            playerState = "WAITING";
-            currentRide = null;
-            ridePathGeoJSON = null;
-            if (busRouteLine) map.removeLayer(busRouteLine);
-            
-            document.getElementById('btn-alight').style.display = "none";
-            document.getElementById('btn-alight').innerText = "ALIGHT AT NEXT STOP";
-            document.getElementById('btn-alight').style.background = "#DC3545";
-            
-            arriveAtStop(); // Arrive at whatever the target location was
-        }
-
-        // --- 7. GAME ENGINE LOOP ---
-        document.getElementById('time-speed').addEventListener('input', (e) => {
-            timeMultiplier = parseInt(e.target.value);
-            document.getElementById('speed-display').innerText = timeMultiplier + "x";
+        document.getElementById('btn-clear-direction').addEventListener('click', () => {
+            if(!confirm("Clear all stops for this direction?")) return;
+            routes[editingRouteId][editingDirection].stopIds = [];
+            updateRouteEditorUI();
+            drawRouteLine(editingRouteId, editingDirection);
         });
 
-        setInterval(() => {
-            const tickRate = 100;
-            const timeToAdd = tickRate * timeMultiplier;
-            gameTime = new Date(gameTime.getTime() + timeToAdd);
-            document.getElementById('clock').innerText = gameTime.toLocaleTimeString('en-GB');
+        // --- 6. Drawing the Route Line (OSRM) ---
+        async function drawRouteLine(routeId, direction) {
+            const dirData = routes[routeId][direction];
+            if (dirData.polylineLayer) { map.removeLayer(dirData.polylineLayer); dirData.polylineLayer = null; }
+            if (dirData.stopIds.length < 2) return; 
 
-            const secondsPassed = timeToAdd / 1000;
+            const coordsString = dirData.stopIds.map(id => `${globalStops[id].lng},${globalStops[id].lat}`).join(';');
+            const osrmRouteUrl = `https://router.project-osrm.org/route/v1/driving/${coordsString}?geometries=geojson&overview=full`;
 
-            // HANDLE WALKING
-            if (playerState === "WALKING" && targetLocation) {
-                const from = turf.point([playerLoc[1], playerLoc[0]]);
-                const to = turf.point([targetLocation.lng, targetLocation.lat]);
-                let distToTarget = turf.distance(from, to, "kilometers") * 1000;
-                let stepDist = walkingSpeed * secondsPassed;
+            try {
+                const response = await fetch(osrmRouteUrl);
+                const data = await response.json();
 
-                if (stepDist >= distToTarget) arriveAtStop();
-                else {
-                    const bearing = turf.bearing(from, to);
-                    const newPos = turf.destination(from, stepDist / 1000, bearing, "kilometers");
-                    playerLoc = [newPos.geometry.coordinates[1], newPos.geometry.coordinates[0]];
+                if (data.code === 'Ok') {
+                    const isOutbound = direction === 'outbound';
+                    dirData.polylineLayer = L.geoJSON(data.routes[0].geometry, {
+                        style: { 
+                            color: routes[routeId].color, 
+                            weight: isOutbound ? 5 : 4, 
+                            opacity: isOutbound ? 0.9 : 0.6,
+                            dashArray: isOutbound ? null : '5, 10' 
+                        }
+                    }).addTo(map);
                 }
-                updateGraphics();
-            }
-
-            // HANDLE RIDING ON ROAD
-            if (playerState === "RIDING" && ridePathGeoJSON && targetLocation) {
-                let stepDist = busSpeed * secondsPassed;
-                rideDistanceTravelled += stepDist;
-
-                if (rideDistanceTravelled >= rideTotalDistance) {
-                    // Arrived at the next stop
-                    playerLoc = [targetLocation.lat, targetLocation.lng];
-                    
-                    if (wantToAlight) {
-                        forceAlight();
-                    } else {
-                        // Stay on bus, calculate path to the NEXT stop
-                        calculateNextStopPath();
-                    }
-                } else {
-                    // Drive along the road geometry
-                    let currentPoint = turf.along(ridePathGeoJSON, rideDistanceTravelled / 1000, {units: 'kilometers'});
-                    playerLoc = [currentPoint.geometry.coordinates[1], currentPoint.geometry.coordinates[0]];
-                }
-                updateGraphics();
-            }
-
-        }, 100);
-
-        function updateGraphics() {
-            playerMarker.setLatLng(playerLoc);
-            radiusCircle.setLatLng(playerLoc);
-            map.panTo(playerLoc);
+            } catch (error) { console.error("Routing error:", error); }
         }
-
-        // BOOT GAME
-        loadGameData();
-
     </script>
 </body>
 </html>
